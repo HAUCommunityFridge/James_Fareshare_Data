@@ -1,0 +1,183 @@
+---
+title: "Fareshare Data Dashboard"
+logo: "img/nl_agridat_hex_tp.png"
+author: "Harper Adams University"
+format: 
+  dashboard:
+    theme: cerulean
+orientation: columns
+---
+
+## Setup and Data Loading
+```{r setup, include=FALSE}
+# Load necessary packages
+library(tidyverse)
+library(lubridate)
+library(plotly)
+library(readxl)
+library(dplyr)
+
+# Load data from Excel
+table <- read_excel("data/Cleaned_Ordered_Fareshare_Dat_Final.xlsx")
+
+# Replace any NA, n/a, N/A with empty strings
+table <- table %>%
+  mutate(across(everything(), ~replace_na(.x, "")))
+
+# Ensure the data is sorted by Date
+table <- table %>% arrange(Date)
+
+# Convert relevant columns to numeric types
+table <- table %>%
+  mutate(
+    Total_Wt_Kg = as.numeric(Total_Wt_Kg),
+    Quantity = as.numeric(Quantity),
+    Unit_Price_GBP = as.numeric(Unit_Price_GBP),
+    Total_Price_GBP = as.numeric(Total_Price_GBP),
+    Unit_Wt_Kg = as.numeric(Unit_Wt_Kg),
+    Stock_Code = as.numeric(Stock_Code)
+  )
+
+# Consolidate and clean up categories
+table <- table %>%
+  mutate(Category = case_when(
+    Category %in% c("0", "nan") ~ NA_character_, # Remove invalid categories
+    Category == "read and bread products" ~ "Bread and bread products", # Fix typo
+    Category %in% c("Chilled meat", "Chilled fish", "Milk", "Tesco Eggs", "Eggs") ~ "Chilled products with dairy and eggs", # Consolidate into Chilled products
+    TRUE ~ Category
+  ))
+
+# Remove any rows with NA categories after cleaning
+table <- table %>% filter(!is.na(Category))
+
+# Check the unique categories after cleaning
+unique_categories <- unique(table$Category)
+print(unique_categories)
+
+# Summarize total food saved in kilograms
+total_food_saved_kg <- sum(table$Total_Wt_Kg, na.rm = TRUE)
+
+# Summarize total value of food saved in GBP
+total_cost_saved_gbp <- sum(table$Total_Price_GBP, na.rm = TRUE)
+
+# Add constant to total food saved
+constant <- 8362.14 - total_food_saved_kg
+total_food_saved_kg_plus_constant <- total_food_saved_kg + constant
+```
+
+
+# Saved Food Since 10th January
+
+## Row 1 {width="25%"}
+
+```{r}
+#| component: valuebox
+#| title: "Total Food Saved (Kg)"
+#| color: primary
+# Display the total food saved in kilograms, rounded to two decimal places
+round(total_food_saved_kg_plus_constant, 2)
+```
+
+```{r}
+#| component: valuebox
+#| title: "Total Value of Food Saved (GBP)"
+#| color: secondary
+# Display the total value of food saved in GBP, rounded to two decimal places
+round(total_cost_saved_gbp, 2)
+```
+
+
+## Row 2 {.tabset}
+```{r}
+#| title: "Distribution of Food Weights by Category"
+# Distribution of total weight by category for food saved by Fareshare
+
+# Group the data by category and summarize the total weight
+category_totals_weight <- table %>%
+  group_by(Category) %>%
+  summarise(Total_Weight = sum(Total_Wt_Kg, na.rm = TRUE))
+
+# Create Plotly bar plot for category distribution
+plot_ly(category_totals_weight, x = ~reorder(Category, -Total_Weight), y = ~Total_Weight, type = 'bar', 
+        marker = list(color = '#007BFF', line = list(color = 'black', width = 1.5))) %>%
+  layout(
+    title = list(text = 'Distribution of Total Weight of Food Saved by Category (Kg)', font = list(size = 16, color = 'black')),
+    xaxis = list(title = 'Category', titlefont = list(size = 14, color = 'black'), tickfont = list(size = 12, color = 'black'), tickangle = -45),
+    yaxis = list(title = 'Total Weight (Kg)', titlefont = list(size = 14, color = 'black'), tickfont = list(size = 12, color = 'black')),
+    plot_bgcolor = 'white',
+    paper_bgcolor = 'white'
+  )
+```
+
+```{r}
+#| title: "Cumulative Weight of Food Saved Over Time by Category"
+
+# Ensure the 'Date' column is in the correct Date format
+table$Date <- as.Date(table$Date, format="%Y-%m-%d")
+
+# Filter out rows where the Date is NA
+table <- table %>% filter(!is.na(Date))
+
+# Group the data by week and category, ensuring the 'Week' is a Date object
+weekly_data <- table %>%
+  mutate(Week = floor_date(Date, "week")) %>%
+  group_by(Week, Category) %>%
+  summarise(Weekly_Weight = sum(Total_Wt_Kg, na.rm = TRUE)) %>%
+  arrange(Week)
+
+# Ensure that 'Week' is indeed a Date object
+weekly_data$Week <- as.Date(weekly_data$Week)
+
+# Get the range of weeks in the data
+full_weeks <- seq(from = min(weekly_data$Week, na.rm = TRUE), to = max(weekly_data$Week, na.rm = TRUE), by = "week")
+
+# Create a data frame ensuring all weeks and categories are represented
+full_data <- expand.grid(Week = full_weeks, Category = unique(weekly_data$Category))
+
+# Merge with the actual data, filling missing values with zero
+full_data <- full_data %>%
+  left_join(weekly_data, by = c("Week", "Category")) %>%
+  mutate(Weekly_Weight = replace_na(Weekly_Weight, 0))
+
+# Calculate the cumulative weight for each category, ensuring it starts from zero
+full_data <- full_data %>%
+  group_by(Category) %>%
+  mutate(Cumulative_Weight = cumsum(Weekly_Weight))
+
+# Ensure the cumulative weight only increases
+full_data <- full_data %>%
+  group_by(Category) %>%
+  mutate(Cumulative_Weight = cummax(Cumulative_Weight))
+
+# Create an interactive Plotly line plot for cumulative weight over time, segregated by week and category
+plot <- plot_ly(full_data, x = ~Week, y = ~Cumulative_Weight, color = ~Category, type = 'scatter', mode = 'lines+markers',
+                line = list(width = 2), marker = list(size = 5)) %>%
+  layout(
+    title = "Cumulative Weight of Food Saved Over Time by Category",
+    xaxis = list(title = "Week"),
+    yaxis = list(title = "Cumulative Weight (Kg)"),
+    legend = list(orientation = 'h',  # Horizontal legend
+                  y = -0.3,  # Adjust the position to move it within the plot
+                  x = 0.5,
+                  xanchor = 'center',
+                  font = list(size = 10)),
+    margin = list(b = 80),  # Add more space at the bottom for the legend
+    hovermode = "compare",  # Compare hover information across categories
+    plot_bgcolor = 'rgba(0, 0, 0, 0)',  # Transparent background
+    paper_bgcolor = 'rgba(0, 0, 0, 0)'
+  )
+
+# Display the interactive plot
+plot
+```
+
+
+
+# About
+## Dashboard Information
+<p style="font-size: 20px;">
+**Dashboard Information:**
+<p style="font-size: 18px;">
+Welcome to the Fareshare Data Dashboard. This dashboard provides insights into the amount of food saved through Fareshare with our community fridge initiative, focusing on the food used from our community fridge.
+</p>
+
