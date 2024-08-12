@@ -171,6 +171,67 @@ plot <- plot_ly(full_data, x = ~Week, y = ~Cumulative_Weight, color = ~Category,
 plot
 ```
 
+```{r}
+#| title: "Cumulative Value of Food Saved Over Time by Category"
+
+# Ensure the 'Date' column is in the correct Date format
+table$Date <- as.Date(table$Date, format="%Y-%m-%d")
+
+# Filter out rows where the Date is NA
+table <- table %>% filter(!is.na(Date))
+
+# Group the data by week and category, ensuring the 'Week' is a Date object
+weekly_data_value <- table %>%
+  mutate(Week = floor_date(Date, "week")) %>%
+  group_by(Week, Category) %>%
+  summarise(Weekly_Value = sum(Total_Price_GBP, na.rm = TRUE)) %>%
+  arrange(Week)
+
+# Ensure that 'Week' is indeed a Date object
+weekly_data_value$Week <- as.Date(weekly_data_value$Week)
+
+# Get the range of weeks in the data
+full_weeks_value <- seq(from = min(weekly_data_value$Week, na.rm = TRUE), to = max(weekly_data_value$Week, na.rm = TRUE), by = "week")
+
+# Create a data frame ensuring all weeks and categories are represented
+full_data_value <- expand.grid(Week = full_weeks_value, Category = unique(weekly_data_value$Category))
+
+# Merge with the actual data, filling missing values with zero
+full_data_value <- full_data_value %>%
+  left_join(weekly_data_value, by = c("Week", "Category")) %>%
+  mutate(Weekly_Value = replace_na(Weekly_Value, 0))
+
+# Calculate the cumulative value for each category, ensuring it starts from zero
+full_data_value <- full_data_value %>%
+  group_by(Category) %>%
+  mutate(Cumulative_Value = cumsum(Weekly_Value))
+
+# Ensure the cumulative value only increases
+full_data_value <- full_data_value %>%
+  group_by(Category) %>%
+  mutate(Cumulative_Value = cummax(Cumulative_Value))
+
+# Create an interactive Plotly line plot for cumulative value over time, segregated by week and category
+plot_value <- plot_ly(full_data_value, x = ~Week, y = ~Cumulative_Value, color = ~Category, type = 'scatter', mode = 'lines+markers',
+                line = list(width = 2), marker = list(size = 5)) %>%
+  layout(
+    title = "Cumulative Value of Food Saved Over Time by Category",
+    xaxis = list(title = "Week"),
+    yaxis = list(title = "Cumulative Value (GBP)"),
+    legend = list(orientation = 'h',  # Horizontal legend
+                  y = -0.3,  # Adjust the position to move it within the plot
+                  x = 0.5,
+                  xanchor = 'center',
+                  font = list(size = 10)),
+    margin = list(b = 80),  # Add more space at the bottom for the legend
+    hovermode = "compare",  # Compare hover information across categories
+    plot_bgcolor = 'rgba(0, 0, 0, 0)',  # Transparent background
+    paper_bgcolor = 'rgba(0, 0, 0, 0)'
+  )
+
+# Display the interactive plot
+plot_value
+```
 
 
 # About
@@ -180,4 +241,3 @@ plot
 <p style="font-size: 18px;">
 Welcome to the Fareshare Data Dashboard. This dashboard provides insights into the amount of food saved through Fareshare with our community fridge initiative, focusing on the food used from our community fridge.
 </p>
-
